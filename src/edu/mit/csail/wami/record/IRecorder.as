@@ -1,4 +1,4 @@
-/* 
+/*
 * Copyright (c) 2011
 * Spoken Language Systems Group
 * MIT Computer Science and Artificial Intelligence Laboratory
@@ -32,18 +32,23 @@ package edu.mit.csail.wami.record
 	{
 		// Start and stop recording.  Calling start while recording
 		// or calling stop when not recording should have no effect.
-		function start(url:String, listener:StateListener):void; 
+		function start(url:String, listener:StateListener):void;
 		function stop(force:Boolean = false):void;
-		
-		// It can be helpful to buffer a certain amount of audio to 
+
+		// It can be helpful to buffer a certain amount of audio to
 		// prepend (and append) to the audio collected between start
 		// and stop.  This means, Flash needs to constantly listen.
 		// There are other times when it's obvious no recording will
 		// be done, and so listening is unnecesary.
 		function listen(paddingMillis:uint):void;
 		function unlisten():void;
-		
+
 		// Audio level (between 0 and 100)
-		function level():int; 
+		function level():int;
+
+		// Pause and resume recording. Calling any of the methods while not
+		// recording should have no effect.
+		function pause():void;
+		function resume():void;
 	}
 }

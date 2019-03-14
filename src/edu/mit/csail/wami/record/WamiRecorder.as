@@ -1,4 +1,4 @@
-/* 
+/*
 * Copyright (c) 2011
 * Spoken Language Systems Group
 * MIT Computer Science and Artificial Intelligence Laboratory
@@ -36,7 +36,7 @@ package edu.mit.csail.wami.record
 	import edu.mit.csail.wami.utils.External;
 	import edu.mit.csail.wami.utils.Pipe;
 	import edu.mit.csail.wami.utils.StateListener;
-	
+
 	import flash.events.SampleDataEvent;
 	import flash.events.StatusEvent;
 	import flash.media.Microphone;
@@ -44,11 +44,11 @@ package edu.mit.csail.wami.record
 	import flash.utils.Endian;
 	import flash.utils.clearInterval;
 	import flash.utils.setInterval;
-	
+
 	public class WamiRecorder implements IRecorder
 	{
 		private static var CHUNK_DURATION_MILLIS:Number = 200;
-		
+
 		private var mic:Microphone = null;
 		private var params:WamiParams;
 		private var audioPipe:Pipe;
@@ -58,27 +58,30 @@ package edu.mit.csail.wami.record
 		private var stopInterval:uint;
 		private var paddingMillis:uint = 0;  // initially 0, but listen changes it.
 		private var listening:Boolean = false;
-		
-		// To determine if the amount of audio recorded matches up with 
+
+		// To determine if the amount of audio recorded matches up with
 		// the length of time we've recorded (i.e. not dropping any frames)
 		private var handled:uint;
 		private var startTime:Date;
 		private var stopTime:Date;
 		private var listener:StateListener;
 
+		// For pausing and resuming
+		private var recordingPaused:Boolean = false;
+
 		public function WamiRecorder(mic:Microphone, params:WamiParams)
-		{	
+		{
 			this.params = params;
 			this.circularBuffer = new BytePipe(getPaddingBufferSize());
 			this.mic = mic;
 			mic.addEventListener(StatusEvent.STATUS, onMicStatus);
-			
+
 			if (getChunkSize() <= 0)
 			{
 				throw new Error("Desired duration is too small, even for streaming chunks: " + getChunkSize());
 			}
 		}
-		
+
 		/**
 		 * The WAMI recorder can listen constantly, keeping a buffer of the last
 		 * few milliseconds of audio.  Often people start talking before they click the
@@ -95,7 +98,7 @@ package edu.mit.csail.wami.record
 				listening = true;
 			}
 		}
-		
+
 		public function unlisten():void {
 			if (listening) {
 				mic.removeEventListener(SampleDataEvent.SAMPLE_DATA, sampleHandler);
@@ -106,20 +109,20 @@ package edu.mit.csail.wami.record
 				External.debug("Unlistening.");
 			}
 		}
-		
+
 		protected function onMicStatus(event:StatusEvent):void
 		{
 			External.debug("status: " + event.code);
-			if (event.code == "Microphone.Unmuted") 
+			if (event.code == "Microphone.Unmuted")
 			{
 				listen(this.paddingMillis);
 			} else if (event.code == "Microphone.Muted") {
 				unlisten();
 			}
 		}
-		
-		public function start(url:String, listener:StateListener):void 
-		{	
+
+		public function start(url:String, listener:StateListener):void
+		{
 			// Forces security if mic is still muted in debugging mode.
 			listen(this.paddingMillis);
 
@@ -137,17 +140,17 @@ package edu.mit.csail.wami.record
 				audioPipe.write(circularBuffer.getByteArray());
 				circularBuffer = new BytePipe(getPaddingBufferSize());
 			}
-			
+
 			listener.started();
 
 			handled = 0;
 			startTime = new Date();
 		}
-		
+
 		public function createAudioPipe(url:String, listener:StateListener):Pipe
 		{
 			this.listener = listener;
-			
+
 			var post:Pipe;
 			var container:IAudioContainer;
 			if (params.stream)
@@ -163,7 +166,7 @@ package edu.mit.csail.wami.record
 				post = new SinglePost(url, "audio/x-wav", 30*1000, listener);
 				container = new WaveContainer();
 			}
-			
+
 			// Setup the audio pipes.  A transcoding pipe converts floats
 			// to shorts and passes them on to a chunking pipe, which spits
 			// out chunks to a pipe that possibly adds a WAVE header
@@ -174,13 +177,19 @@ package edu.mit.csail.wami.record
 
 			return pipe;
 		}
-		
+
 		internal function sampleHandler(evt:SampleDataEvent):void
 		{
 			evt.data.position = 0;
-			try 
+			try
 			{
-				if (audioPipe)
+				// The approach used for pausing/resuming recording is rather simplistic, but should work.
+				// Basically we just stop writing to the recording pipe, but we keep listening and
+				// triggering the event to process samples. Once the flag is disabled again, we go
+				// back to writing the sampled audio to the pipe. If besides we were passively listening
+				// we will store the collected audio in the circular buffer, and will be able to append it
+				// when resuming recording.
+				if (audioPipe && !recordingPaused)
 				{
 					audioPipe.write(evt.data);
 					handled += evt.data.length / 4;
@@ -197,16 +206,16 @@ package edu.mit.csail.wami.record
 				listener.failed(error);
 			}
 		}
-		
-		public function stop(force:Boolean = false):void 
+
+		public function stop(force:Boolean = false):void
 		{
 			clearInterval(stopInterval);
 
-			if (force) 
+			if (force)
 			{
 				reallyStop();
-			} 
-			else 
+			}
+			else
 			{
 				stopInterval = setInterval(function():void {
 					clearInterval(stopInterval);
@@ -214,13 +223,38 @@ package edu.mit.csail.wami.record
 				}, paddingMillis);
 			}
 		}
-		
-		public function level():int 
+
+		public function level():int
 		{
 			if (!audioPipe) return 0;
 			return mic.activityLevel;
 		}
-		
+
+		// The approach used for pausing recording is rather simplistic, but should work.
+		// Basically we just stop writing to the recording pipe, but we keep listening and
+		// triggering the event to process samples. Once the flag is disabled again, we go
+		// back to writing the sampled audio to the pipe.
+		public function pause():void
+		{
+			this.recordingPaused = true;
+		}
+
+		// The approach used for pausing/resuming recording is rather simplistic, but should work.
+		// Basically we just stop writing to the recording pipe, but we keep listening and
+		// triggering the event to process samples. Once the flag is disabled again, we go
+		// back to writing the sampled audio to the pipe.
+		public function resume():void
+		{
+			if (paddingMillis > 0) {
+				// Prepend a small amount of audio we've already recorded.
+				circularBuffer.close();
+				audioPipe.write(circularBuffer.getByteArray());
+				circularBuffer = new BytePipe(getPaddingBufferSize());
+			}
+
+			this.recordingPaused = false;
+		}
+
 		private function reallyStop():void
 		{
 			if (!audioPipe) return;
@@ -230,16 +264,16 @@ package edu.mit.csail.wami.record
 			} catch(error:Error) {
 				listener.failed(error);
 			}
-			
+
 			audioPipe = null;
 			validateAudioLength();
-			
+
 			if (this.paddingMillis == 0) {
 				// No need if we're not padding the audio
 				unlisten();
 			}
 		}
-		
+
 		private function validateAudioLength():void
 		{
 			stopTime = new Date();
@@ -249,21 +283,21 @@ package edu.mit.csail.wami.record
 			startTime = null;
 			stopTime = null;
 		}
-		
-		private function getBytesPerSecond():uint 
+
+		private function getBytesPerSecond():uint
 		{
 			return params.format.channels * (params.format.bits/8) * params.format.rate;
 		}
-		
+
 		private function getChunkSize():uint
 		{
 			return params.stream ? getBytesPerSecond() * CHUNK_DURATION_MILLIS / 1000.0 : int.MAX_VALUE;
 		}
-		
+
 		private function getPaddingBufferSize():uint
 		{
 			return uint(getBytesPerSecond()*params.paddingMillis/1000.0);
 		}
-		
+
 	}
 }
