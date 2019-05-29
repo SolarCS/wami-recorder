@@ -1,8 +1,8 @@
 # wami-recorder
-Fork of https://code.google.com/archive/p/wami-recorder/ .
 A JavaScript/Flash solution to recording audio from a browser.
+This version is an extension of the original one, that allows to __pause/resume recording__.
 
-The current version is an extension of the original one, to __allow pause/resume recording__.
+Fork of https://code.google.com/archive/p/wami-recorder/
 
 ## Setup
 * Download Adobe's free Flex SDK.
